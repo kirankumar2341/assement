@@ -13,7 +13,6 @@ def lambda_handler(event, context):
     # log event
     print("Event: ", json.dumps(event))
 
-    # Extract HTTP method and query parameters
     http_method = event.get('httpMethod', '')
     query_params = event.get('queryStringParameters', {})
     action = query_params.get('action', '')

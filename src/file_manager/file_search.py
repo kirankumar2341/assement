@@ -46,7 +46,6 @@ class FileSearch:
                 "body": json.dumps({"error": str(e)})
             }
     def size_search(self,min_size,max_size,prefix,limit = 30):
-        def handle_list_images(query_params):
             """
             Lists all images in the S3 bucket with filters for prefix and size range.
             """
