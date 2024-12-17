@@ -16,10 +16,4 @@ DynamoDB Schema Optimization:
 
 The current DynamoDB design includes only two columns. To enhance query flexibility and enable faster searches, we plan to add new Global Secondary Indexes (GSIs) based on query patterns.
 
-Missing File Deletion API:
 
-The current implementation lacks an API to delete files.  functionality to be added to delete files from both S3 and DynamoDB.
-
-Missing unittests
-
-Component level unit tests are missing due time constraint

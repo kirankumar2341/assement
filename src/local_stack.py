@@ -1,160 +1,109 @@
-"""
-Note this code to take from difference sources
-"""
-
 import boto3
 import json
-import zipfile
 import os
-import boto3
 from botocore.exceptions import ClientError
 
-# LocalStack endpoint
-LOCALSTACK_ENDPOINT = "http://localhost:4566"
+# AWS Config for LocalStack
+aws_config = {
+    "endpoint_url": "http://localhost:4566",
+    "aws_access_key_id": "test",
+    "aws_secret_access_key": "test",
+    "region_name": "us-east-1"
+}
 
 # Initialize clients
-s3 = boto3.client('s3', endpoint_url=LOCALSTACK_ENDPOINT, region_name='us-east-1')
-dynamodb = boto3.client('dynamodb', endpoint_url=LOCALSTACK_ENDPOINT, region_name='us-east-1')
-lambda_client = boto3.client('lambda', endpoint_url=LOCALSTACK_ENDPOINT, region_name='us-east-1')
-api_gateway = boto3.client('apigateway', endpoint_url=LOCALSTACK_ENDPOINT)
+s3 = boto3.client("s3", **aws_config)
+dynamodb = boto3.client("dynamodb", **aws_config)
+lambda_client = boto3.client("lambda", **aws_config)
+iam = boto3.client("iam", **aws_config)
+api_gateway = boto3.client("apigateway", **aws_config)
 
-
+lambda_client.add_permission(
+    FunctionName="ImageLambdaFunction",
+    StatementId="api-gateway-permission",
+    Action="lambda:InvokeFunction",
+    Principal="apigateway.amazonaws.com"
+)
 
 # S3 Bucket Setup
 def create_s3_bucket(bucket_name):
-    s3.create_bucket(Bucket=bucket_name)
-    print(f"S3 bucket '{bucket_name}' created.")
+    try:
+        s3.create_bucket(Bucket=bucket_name)
+        print(f"S3 bucket '{bucket_name}' created.")
+    except ClientError as e:
+        print(f"Error creating S3 bucket: {e}")
 
 
 # DynamoDB Table Setup
 def create_dynamodb_table(table_name):
-    dynamodb.create_table(
-        TableName=table_name,
-        KeySchema=[{'AttributeName': 'id', 'KeyType': 'HASH'}],
-        AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}],
-        ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5},
-    )
-    print(f"DynamoDB table '{table_name}' created.")
+    try:
+        dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[{'AttributeName': 'id', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}],
+            ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5},
+        )
+        print(f"DynamoDB table '{table_name}' created.")
+    except ClientError as e:
+        print(f"Error creating DynamoDB table: {e}")
+
+
+# IAM Role Setup for Lambda
+def create_lambda_role():
+    try:
+        role_name = "lambda-execution-role"
+        assume_role_policy_document = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"Service": "lambda.amazonaws.com"},
+                    "Action": "sts:AssumeRole"
+                }
+            ]
+        }
+        role_response = iam.create_role(
+            RoleName=role_name,
+            AssumeRolePolicyDocument=json.dumps(assume_role_policy_document)
+        )
+        print(f"Created IAM role '{role_name}' with ARN: {role_response['Role']['Arn']}")
+        return role_response['Role']['Arn']
+    except ClientError as e:
+        print(f"Error creating IAM role: {e}")
+        return None
 
 
 # Lambda Function Setup
-def create_lambda_function(function_name, bucket_name, key_name):
-    # Create a ZIP file for the Lambda function
-    function_code = """
-import boto3
-import json
-
-def lambda_handler(event, context):
-    s3 = boto3.client('s3')
-    print("Event Received:", json.dumps(event))
-    return {"statusCode": 200, "body": "Lambda Executed Successfully!"}
-"""
-    zip_file = "lambda_function.zip"
-    with zipfile.ZipFile(zip_file, 'w') as zf:
-        zf.writestr("lambda_function.py", function_code)
-
-    # Upload the ZIP to S3
-    with open(zip_file, "rb") as f:
-        s3.put_object(Bucket=bucket_name, Key=key_name, Body=f)
-    os.remove(zip_file)
-    print(f"Uploaded Lambda code to S3 bucket '{bucket_name}' with key '{key_name}'.")
-
-    # Create the Lambda function
-    lambda_client.create_function(
-        FunctionName=function_name,
-        Runtime='python3.9',
-        Role='arn:aws:iam::123456789012:role/lambda-role',
-        Handler='lambda_function.lambda_handler',
-        Code={'S3Bucket': bucket_name, 'S3Key': key_name},
-        Timeout=15,
-        MemorySize=128,
-    )
-    print(f"Lambda function '{function_name}' created.")
-
-
-
-
-def create_table_localstack(table_name):
-    # Create a DynamoDB client that points to LocalStack
-    dynamodb = boto3.resource(
-        'dynamodb',
-        region_name='us-east-1',
-        endpoint_url='http://localhost:4566'  # LocalStack endpoint for DynamoDB
-    )
-
+def create_lambda_function(function_name, role_arn, bucket_name, key_name):
     try:
-        # Create the ImageStorage table in LocalStack
-        table = dynamodb.create_table(
-            TableName=table_name,
-            KeySchema=[
-                {
-                    'AttributeName': 'image_id',
-                    'KeyType': 'HASH'  # Partition key
-                },
-            ],
-            AttributeDefinitions=[
-                {
-                    'AttributeName': 'image_id',
-                    'AttributeType': 'S'  # String type for image_id
-                },
-                {
-                    'AttributeName': 'meta_data',
-                    'AttributeType': 'M'
-                }
-            ],
-            ProvisionedThroughput={
-                'ReadCapacityUnits': 5,
-                'WriteCapacityUnits': 5
-            },
-            GlobalSecondaryIndexes=[
-                {
-                    'IndexName': 'TagsIndex',
-                    'KeySchema': [
-                        {
-                            'AttributeName': 'tags',
-                            'KeyType': 'HASH'
-                        },
-                        {
-                            'AttributeName': 'upload_timestamp',
-                            'KeyType': 'RANGE'
-                        }
-                    ],
-                    'Projection': {
-                        'ProjectionType': 'ALL'
-                    },
-                    'ProvisionedThroughput': {
-                        'ReadCapacityUnits': 5,
-                        'WriteCapacityUnits': 5
-                    }
-                },
-                {
-                    'IndexName': 'FileFormatIndex',
-                    'KeySchema': [
-                        {
-                            'AttributeName': 'file_format',
-                            'KeyType': 'HASH'
-                        },
-                        {
-                            'AttributeName': 'upload_timestamp',
-                            'KeyType': 'RANGE'
-                        }
-                    ],
-                    'Projection': {
-                        'ProjectionType': 'ALL'
-                    },
-                    'ProvisionedThroughput': {
-                        'ReadCapacityUnits': 5,
-                        'WriteCapacityUnits': 5
-                    }
-                }
-            ]
-        )
-        print("Table created successfully.")
-        return table
-    except ClientError as e:
-        print(f"Error creating table: {e}")
-        return None
+        zip_file = "/Users/kiranin/Downloads/monty/assement/src/file_manager/lambda_function_zip.zip"
 
+        # Check if the zip file exists
+        if not os.path.exists(zip_file):
+            print(f"Error: The file '{zip_file}' does not exist.")
+            return
+
+        # Upload the ZIP to S3
+        with open(zip_file, "rb") as f:
+            s3.put_object(Bucket=bucket_name, Key=key_name, Body=f)
+        print(f"Uploaded Lambda code to S3 bucket '{bucket_name}' with key '{key_name}'.")
+
+        # Create the Lambda function
+        lambda_response = lambda_client.create_function(
+            FunctionName=function_name,
+            Runtime='python3.9',
+            Role=role_arn,  # Use the IAM role ARN
+            Handler='lambda_function.lambda_handler',
+            Code={'S3Bucket': bucket_name, 'S3Key': key_name},
+            Timeout=15,
+            MemorySize=128,
+        )
+        print(f"Lambda function '{function_name}' created. Response: {lambda_response}")
+    except ClientError as e:
+        print(f"Error creating Lambda function: {e}")
+
+
+# API Gateway Setup
 def create_api_gateway(api_name, lambda_function_arn):
     try:
         # Create the API
@@ -219,20 +168,25 @@ def create_api_gateway(api_name, lambda_function_arn):
         print(f"Error creating API Gateway: {e}")
 
 
-
-
+# Main setup function
 def main():
     # Resource names
     bucket_name = "image-bucket"
     table_name = "Metadata"
     lambda_function_name = "ImageLambdaFunction"
-    lambda_code_key = "1lambda_function.zip"
+    lambda_code_key = "lambda_function.zip"
 
     # Create resources
     create_s3_bucket(bucket_name)
     create_dynamodb_table(table_name)
-    create_lambda_function(lambda_function_name, bucket_name, lambda_code_key)
-    create_table_localstack(table_name)
+
+    # Create Lambda role and use it to create the Lambda function
+    role_arn = create_lambda_role()
+    if role_arn:
+        create_lambda_function(lambda_function_name, role_arn, bucket_name, lambda_code_key)
+
+    # Create API Gateway and link it to Lambda function
+    create_api_gateway("image_store", lambda_function_name)
 
 
 if __name__ == "__main__":
